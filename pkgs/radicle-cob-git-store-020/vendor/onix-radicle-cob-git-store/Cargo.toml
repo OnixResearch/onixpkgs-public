@@ -1,0 +1,19 @@
+[package]
+name = "onix-radicle-cob-git-store"
+version = "0.1.1"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[dependencies]
+git-ref-format-core = "=0.6.0"
+git2 = { version = "=0.20.4", features = ["vendored-libgit2"], default-features = false }
+radicle-cob = { version = "=0.20.0", features = ["git2"] }
+radicle-crypto = { version = "=0.17.0", features = ["ssh"] }
+radicle-oid = { version = "=0.2.0", features = ["git2", "serde", "sha1", "std"], default-features = false }
+thiserror = "2"
+
+[dev-dependencies]
+nonempty = "=0.9.0"
+radicle-crypto = { version = "=0.17.0", features = ["ssh", "test"] }
+tempfile = "3"

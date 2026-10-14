@@ -1,0 +1,79 @@
+diff --git a/src/ssh.rs b/src/ssh.rs
+index 4328242..eb50996 100644
+--- a/src/ssh.rs
++++ b/src/ssh.rs
+@@ -9,7 +9,7 @@ use std::sync::Arc;
+ 
+ use iroh::{
+-    Endpoint, EndpointId, RelayConfig, RelayUrl, SecretKey,
+-    endpoint::{Connection, RelayMode},
++    Endpoint, EndpointId, RelayConfig, RelayUrl, SecretKey, Watcher,
++    endpoint::{Connection, ConnectionType, RelayMode},
+     protocol::{ProtocolHandler, Router},
+ };
+ use tokio::{
+@@ -18,6 +18,15 @@ use tokio::{
+     process::{Child, Command},
+ };
+ 
++fn connection_type_label(connection_type: &ConnectionType) -> &'static str {
++    match connection_type {
++        ConnectionType::Direct(_) => "direct",
++        ConnectionType::Relay(_) => "relay",
++        ConnectionType::Mixed(_, _) => "mixed",
++        ConnectionType::None => "none",
++    }
++}
++
+ impl Builder {
+     pub fn new() -> Self {
+         Self {
+@@ -204,7 +213,15 @@ impl IrohSsh {
+         let conn = inner
+             .endpoint
+             .connect(endpoint_id, &IrohSsh::ALPN())
+             .await?;
++        let connection_type = inner
++            .endpoint
++            .conn_type(endpoint_id)
++            .map(|mut watcher| watcher.get())
++            .unwrap_or_default();
++        eprintln!(
++            "IROH_SSH_CONNECTION_TYPE={}", connection_type_label(&connection_type)
++        );
+         let (mut iroh_send, mut iroh_recv) = conn.open_bi().await?;
+         let (mut local_read, mut local_write) = (tokio::io::stdin(), tokio::io::stdout());
+         let a_to_b = async move {
+@@ -503,6 +520,32 @@ mod tests {
+             .collect()
+     }
+ 
++    #[test]
++    fn connection_type_labels_describe_usable_routes() {
++        const DIRECT_ADDRESS: &str = "127.0.0.1:443";
++        const RELAY_URL: &str = "https://relay.example.invalid";
++        let direct_address = DIRECT_ADDRESS.parse().expect("direct socket address");
++        let relay_url: RelayUrl = RELAY_URL.parse().expect("relay URL");
++
++        assert_eq!(
++            connection_type_label(&ConnectionType::Direct(direct_address)),
++            "direct"
++        );
++        assert_eq!(
++            connection_type_label(&ConnectionType::Relay(relay_url.clone())),
++            "relay"
++        );
++        assert_eq!(
++            connection_type_label(&ConnectionType::Mixed(direct_address, relay_url)),
++            "mixed"
++        );
++    }
++
++    #[test]
++    fn connection_type_label_preserves_no_route() {
++        assert_eq!(connection_type_label(&ConnectionType::None), "none");
++    }
++
+     #[test]
+     fn login_user_flag_is_passed_to_ssh() {
+         let opts = SshOpts {

@@ -1,0 +1,125 @@
+diff --git a/crates/mesh-llm-cli/src/parser.rs b/crates/mesh-llm-cli/src/parser.rs
+index ca8ba14..e5ac294 100644
+--- a/crates/mesh-llm-cli/src/parser.rs
++++ b/crates/mesh-llm-cli/src/parser.rs
+@@ -440,6 +440,11 @@ pub struct Cli {
+     #[arg(long, short)]
+     pub join: Vec<String>,
+ 
++    /// Read one mesh invite token from a restricted file (can repeat).
++    /// The token is loaded after argument parsing and never appears in process argv.
++    #[arg(long = "join-file", hide = true)]
++    pub join_file: Vec<PathBuf>,
++
+     /// Discover a mesh and join it.
+     #[arg(long, default_missing_value = "", num_args = 0..=1)]
+     pub discover: Option<String>,
+diff --git a/crates/mesh-llm/src/lib.rs b/crates/mesh-llm/src/lib.rs
+index fdc7931..7cae5db 100644
+--- a/crates/mesh-llm/src/lib.rs
++++ b/crates/mesh-llm/src/lib.rs
+@@ -47,7 +47,7 @@ async fn run_cli_entrypoint() -> anyhow::Result<()> {
+     mesh_llm_tui::install_terminal_panic_hook();
+ 
+     mesh_llm_host_runtime::run_runtime_initialized(
+-        runtime_options_from_cli(cli),
++        runtime_options_from_cli(cli)?,
+         explicit_surface,
+         warning,
+     )
+@@ -130,14 +130,40 @@ fn runtime_help_text() -> Option<String> {
+         .and_then(|()| String::from_utf8(bytes).ok())
+ }
+ 
+-fn runtime_options_from_cli(cli: mesh_llm_cli::Cli) -> mesh_llm_host_runtime::RuntimeOptions {
+-    mesh_llm_host_runtime::RuntimeOptions {
++fn read_join_file(path: &std::path::Path) -> anyhow::Result<String> {
++    let raw = std::fs::read_to_string(path).map_err(|error| {
++        anyhow::anyhow!(
++            "failed to read invite token file {}: {error}",
++            path.display()
++        )
++    })?;
++    let token = raw.trim();
++    if token.is_empty() || token.chars().any(char::is_whitespace) {
++        anyhow::bail!(
++            "invite token file {} must contain exactly one non-empty token",
++            path.display()
++        );
++    }
++    Ok(token.to_string())
++}
++
++fn runtime_options_from_cli(
++    cli: mesh_llm_cli::Cli,
++) -> anyhow::Result<mesh_llm_host_runtime::RuntimeOptions> {
++    let file_tokens = cli
++        .join_file
++        .iter()
++        .map(|path| read_join_file(path))
++        .collect::<anyhow::Result<Vec<_>>>()?;
++    let mut join = cli.join;
++    join.extend(file_tokens);
++    Ok(mesh_llm_host_runtime::RuntimeOptions {
+         log_format: cli.log_format,
+         debug: cli.debug,
+         skippy_metrics_otlp_grpc: cli.skippy_metrics_otlp_grpc,
+         mesh_guardrails: map_mesh_guardrail_mode(cli.mesh_guardrails),
+         help_text: runtime_help_text(),
+-        join: cli.join,
++        join,
+         discover: cli.discover,
+         auto: cli.auto,
+         mesh_discovery_mode: map_mesh_discovery_mode(cli.mesh_discovery_mode),
+@@ -192,7 +218,7 @@ fn runtime_options_from_cli(cli: mesh_llm_cli::Cli) -> mesh_llm_host_runtime::Ru
+         trust_policy: cli.trust_policy.map(map_trust_policy),
+         trust_owner: cli.trust_owner,
+         nostr_discovery: cli.nostr_discovery,
+-    }
++    })
+ }
+ 
+ fn command_uses_machine_output(command: Option<&mesh_llm_cli::Command>) -> bool {
+@@ -280,6 +306,7 @@ fn map_trust_policy(
+ #[cfg(test)]
+ mod cli_entrypoint_tests {
+     use std::ffi::OsString;
++    use std::fs;
+ 
+     #[test]
+     fn runtime_surface_help_request_handles_serve_and_client_help() {
+@@ -332,4 +359,34 @@ mod cli_entrypoint_tests {
+             OsString::from("--help"),
+         ]));
+     }
++
++    #[test]
++    fn join_file_reads_one_trimmed_token() {
++        let dir = tempfile::tempdir().expect("create token fixture directory");
++        let path = dir.path().join("invite-token");
++        fs::write(&path, "mesh-test:private-token\n").expect("write token fixture");
++
++        let token = super::read_join_file(&path).expect("read valid token file");
++
++        assert_eq!(token, "mesh-test:private-token");
++    }
++
++    #[test]
++    fn join_file_rejects_empty_and_multiline_material_without_echoing_it() {
++        let dir = tempfile::tempdir().expect("create token fixture directory");
++        let empty_path = dir.path().join("empty-token");
++        fs::write(&empty_path, "\n").expect("write empty token fixture");
++        let empty_error = super::read_join_file(&empty_path).expect_err("reject empty token");
++        assert!(empty_error.to_string().contains("exactly one non-empty token"));
++
++        let multiline_path = dir.path().join("multiline-token");
++        let secret = "secret-material-that-must-not-leak";
++        fs::write(&multiline_path, format!("mesh-test:valid\n{secret}\n"))
++            .expect("write multiline token fixture");
++        let multiline_error =
++            super::read_join_file(&multiline_path).expect_err("reject multiline token");
++        let diagnostic = multiline_error.to_string();
++        assert!(diagnostic.contains("exactly one non-empty token"));
++        assert!(!diagnostic.contains(secret));
++    }
+ }

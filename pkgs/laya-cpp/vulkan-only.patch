@@ -1,0 +1,13 @@
+diff --git a/third_party/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/third_party/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+--- a/third_party/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/third_party/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -6708,6 +6708,9 @@
+ 
+         device->physical_device.getProperties2(&props2);
+         device->properties = props2.properties;
++        if (device->properties.deviceType != vk::PhysicalDeviceType::eDiscreteGpu &&
++            device->properties.deviceType != vk::PhysicalDeviceType::eIntegratedGpu)
++            throw std::runtime_error("Laya requires a physical Vulkan GPU; software devices are forbidden");
+         device->vendor_id = device->properties.vendorID;
+         device->driver_id = driver_props.driverID;
+ 
